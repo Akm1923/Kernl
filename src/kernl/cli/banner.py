@@ -20,4 +20,4 @@ def render_banner(console: Console, version: str = VERSION) -> None:
         art = Text(_ART, style="bold bright_magenta")
         nav = Text("  CHAT    AGENTS    MODELS    RUNTIME    BENCHMARK", style="bold bright_magenta")
     body = Group(art, Text("[ LOCAL AI COMPUTE PLATFORM ]", style="white"), Text(""), nav)
-    console.print(Panel(body, title="[bold white]⚡ kernl[/]", title_align="left", subtitle=f"[dim]v{version}[/]", border_style="magenta", expand=True))
+    console.print(Panel(body, title="[bold white]⚡ KERNL[/]", title_align="left", subtitle=f"[dim]v{version}[/]", border_style="magenta", expand=True))
