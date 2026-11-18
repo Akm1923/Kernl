@@ -49,8 +49,10 @@ def parse_quantization(value: str | None) -> Quantization:
         return Quantization.UNKNOWN
     normalized = value.strip().upper().replace("-", "_")
     aliases = {"Q4_K_S": Quantization.Q4_K_M, "Q5_K_S": Quantization.Q5_K_M}
+    if normalized in aliases:
+        return aliases[normalized]
     try:
-        return aliases.get(normalized, Quantization(normalized))
+        return Quantization(normalized)
     except ValueError:
         return Quantization.UNKNOWN
 
