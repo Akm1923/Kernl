@@ -22,4 +22,6 @@ def test_runtime_arguments_do_not_use_shell_string(tmp_path: Path):
     config = RuntimeConfig(model_path=tmp_path / "model file.gguf")
     args = config.runtime_arguments()
     assert isinstance(args, list)
-    assert "model file.gguf" in args
+    # The full model path must be passed as one argument element, never inside a shell string.
+    assert str(config.model_path) in args
+    assert all(isinstance(arg, str) for arg in args)
