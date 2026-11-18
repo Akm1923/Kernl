@@ -8,15 +8,15 @@ from kernl.cli.banner import render_banner
 from kernl.hardware.scanner import scan
 from kernl.security import has_secret, set_secret
 from kernl.storage.db import Store
+from kernl.cli.models import register_models
 
 app = typer.Typer(help="Kernl — local AI compute platform", no_args_is_help=False)
 console = Console()
 DATA_DIR = Path.home() / ".kernl"
-
+register_models(app)
 
 def get_store() -> Store:
     return Store(DATA_DIR / "kernl.sqlite3")
-
 
 def display_profile(profile) -> None:
     table = Table(title="Hardware profile", border_style="magenta")
@@ -29,13 +29,11 @@ def display_profile(profile) -> None:
     for warning in profile.warnings:
         console.print(f"[yellow]Warning:[/] {warning}")
 
-
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         render_banner(console, __version__)
         console.print("[magenta]>[/] Welcome to [bold bright_magenta]Kernl[/]. Run [bold]kernl init[/] to begin.")
-
 
 @app.command()
 def init() -> None:
@@ -56,14 +54,12 @@ def init() -> None:
     console.print("[green]Onboarding complete. Hardware profile saved.[/]")
     display_profile(profile)
 
-
 @app.command("scan")
 def scan_command() -> None:
     """Scan the actual host and save a hardware profile."""
     profile = scan()
     get_store().save_profile(profile)
     display_profile(profile)
-
 
 @app.command("profile")
 def profile_command(action: str = typer.Argument("show")) -> None:
@@ -75,10 +71,8 @@ def profile_command(action: str = typer.Argument("show")) -> None:
         raise typer.BadParameter("No profile found. Run kernl init or kernl scan.")
     display_profile(profile)
 
-
 provider_app = typer.Typer(help="Manage AI providers")
 app.add_typer(provider_app, name="provider")
-
 
 @provider_app.command("list")
 def provider_list() -> None:
@@ -86,7 +80,6 @@ def provider_list() -> None:
     for provider in ("local", "gemini", "groq"):
         marker = "[bold bright_magenta]→[/] " if provider == selected else "  "
         console.print(f"{marker}{provider}")
-
 
 @provider_app.command("add")
 def provider_add(provider: str = typer.Argument(...)) -> None:
@@ -96,7 +89,6 @@ def provider_add(provider: str = typer.Argument(...)) -> None:
     set_secret(provider, secret)
     get_store().set("provider", provider)
     console.print("[green]Provider credential stored securely.[/]")
-
 
 @provider_app.command("test")
 def provider_test() -> None:
@@ -108,24 +100,21 @@ def provider_test() -> None:
     else:
         console.print(f"[red]No credential stored for {provider}.[/]")
 
-
 @app.command()
 def doctor() -> None:
     """Check foundation prerequisites without claiming deferred features work."""
     console.print(f"[green]OK[/] Kernl version: {__version__}")
     console.print(f"[green]OK[/] Data directory: {DATA_DIR}")
-    console.print(f"[green]OK[/] SQLite store: available")
-    console.print("[yellow]Deferred:[/] model discovery, llama.cpp installation/execution, and benchmarks.")
-
+    console.print("[green]OK[/] SQLite store: available")
+    console.print("[yellow]Deferred:[/] runtime installation/execution and benchmarks.")
 
 @app.command()
 def agent() -> None:
     """Open the restricted foundation workspace."""
     render_banner(console, __version__)
     console.print("[bold]Restricted agent workspace[/]")
-    console.print("Available foundation actions: scan, profile show, provider list.")
+    console.print("Available foundation actions: scan, profile show, provider list, models search.")
     console.print("No unrestricted shell execution is exposed.")
-
 
 if __name__ == "__main__":
     app()
