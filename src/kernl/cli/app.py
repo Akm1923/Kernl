@@ -1,21 +1,25 @@
 from __future__ import annotations
-from pathlib import Path
+
 import shutil
+from pathlib import Path
+from typing import Annotated
+
 import typer
 from rich.console import Console
 from rich.table import Table
+
 from kernl import __version__
 from kernl.cli.banner import render_banner
-from kernl.hardware.scanner import scan
-from kernl.security import has_secret, set_secret
-from kernl.storage.db import Store
-from kernl.cli.models import register_models
 from kernl.cli.benchmark import register_benchmark
+from kernl.cli.models import register_models
+from kernl.hardware.scanner import scan
 from kernl.models.gguf import GGUFError, GGUFReader
 from kernl.models.memory import estimate_memory
 from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
-from kernl.runtime.installer import RuntimeArtifact, RuntimeInstaller, InstallationError
+from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
+from kernl.security import has_secret, set_secret
+from kernl.storage.db import Store
 
 app = typer.Typer(help="Kernl — local AI compute platform", no_args_is_help=False)
 console = Console()
@@ -31,9 +35,34 @@ def display_profile(profile) -> None:
     table = Table(title="Hardware profile", border_style="magenta")
     for column in ("Capability", "Value", "Origin", "Source"):
         table.add_column(column)
-    for name in ("platform", "architecture", "cpu_model", "cpu_cores", "cpu_threads", "ram_total_bytes", "ram_available_bytes", "gpu_names", "gpu_driver_versions", "storage_free_bytes", "backends"):
+    profile_fields = (
+        "platform",
+        "architecture",
+        "cpu_model",
+        "cpu_cores",
+        "cpu_threads",
+        "ram_total_bytes",
+        "ram_available_bytes",
+        "gpu_names",
+        "gpu_driver_versions",
+        "gpu_memory_bytes",
+        "storage_free_bytes",
+        "backends",
+    )
+    for name in profile_fields:
         value = getattr(profile, name)
-        table.add_row(name, str(value.value if value.value is not None else "UNKNOWN"), value.origin.value, value.source)
+        display_value = value.value
+        if name == "gpu_memory_bytes" and display_value is not None:
+            display_value = [
+                f"{memory / 1024**3:.2f} GiB" if memory is not None else "UNKNOWN"
+                for memory in display_value
+            ]
+        table.add_row(
+            name,
+            str(display_value if display_value is not None else "UNKNOWN"),
+            value.origin.value,
+            value.source,
+        )
     console.print(table)
     for warning in profile.warnings:
         console.print(f"[yellow]Warning:[/] {warning}")
@@ -91,14 +120,17 @@ def provider_test() -> None:
 models_local_app = typer.Typer(help="Inspect local model files"); app.add_typer(models_local_app, name="model")
 
 @models_local_app.command("inspect")
-def model_inspect(path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:
+def model_inspect(
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+) -> None:
     try: metadata = GGUFReader().read(path)
     except GGUFError as exc: raise typer.BadParameter(str(exc)) from exc
     for key, value in (("Architecture", metadata.architecture), ("Parameters", metadata.parameter_count), ("Context", metadata.context_length), ("Embedding", metadata.embedding_length), ("Blocks", metadata.block_count), ("File bytes", metadata.file_size_bytes)):
         console.print(f"[bold]{key}:[/] {value if value is not None else 'UNKNOWN'}")
 
 @models_local_app.command("estimate")
-def model_estimate(path: Path = typer.Argument(..., exists=True, dir_okay=False), quantization: str = typer.Option("", "--quantization"), available_gb: float | None = typer.Option(None, "--available-gb")) -> None:
+def model_estimate(
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)], quantization: str = typer.Option("", "--quantization"), available_gb: float | None = typer.Option(None, "--available-gb")) -> None:
     try: metadata = GGUFReader().read(path)
     except GGUFError as exc: raise typer.BadParameter(str(exc)) from exc
     available = int(available_gb * 1024**3) if available_gb is not None else None
