@@ -5,7 +5,7 @@ from rich.console import Console
 
 from kernl import __version__
 from kernl.cli.app import display_profile
-from kernl.cli.banner import render_banner
+from kernl.cli.banner import VERSION, render_banner
 from kernl.core.types import HardwareProfile, Provenance, ValueOrigin
 from kernl.hardware.scanner import scan
 from kernl.storage.db import Store
@@ -90,3 +90,4 @@ def test_display_profile_formats_vram_in_gib(monkeypatch):
 
 def test_package_version_matches_project_metadata():
     assert __version__ == package_version("kernl")
+    assert VERSION == __version__

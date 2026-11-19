@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 from kernl.models.discovery import ModelCandidate
+
 
 @dataclass(frozen=True)
 class CompatibilityResult:
@@ -10,7 +12,12 @@ class CompatibilityResult:
     score: float
 
 
-def assess_model(model: ModelCandidate, *, available_ram_bytes: int, required_ram_bytes: int | None = None) -> CompatibilityResult:
+def assess_model(
+    model: ModelCandidate,
+    *,
+    available_ram_bytes: int,
+    required_ram_bytes: int | None = None,
+) -> CompatibilityResult:
     """Conservative compatibility assessment; unknown metadata never becomes a false positive."""
     reasons: list[str] = []
     if required_ram_bytes is not None and required_ram_bytes > available_ram_bytes:
@@ -21,4 +28,6 @@ def assess_model(model: ModelCandidate, *, available_ram_bytes: int, required_ra
         reasons.append("model repository id is missing")
     compatible = not reasons
     score = 1.0 if compatible else max(0.0, 1.0 - 0.35 * len(reasons))
-    return CompatibilityResult(compatible=compatible, reasons=tuple(reasons), score=score)
+    return CompatibilityResult(
+        compatible=compatible, reasons=tuple(reasons), score=score
+    )

@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from enum import StrEnum
 from pathlib import Path
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -60,7 +62,28 @@ class RuntimeConfig(BaseModel):
 
     def runtime_arguments(self) -> list[str]:
         """Return deterministic llama.cpp-style arguments; no shell interpolation."""
-        args = ["--model", str(self.model_path), "--ctx-size", str(self.context_size), "--batch-size", str(self.batch_size), "--ubatch-size", str(self.microbatch_size), "--gpu-layers", str(self.gpu_layers), "--cache-type-k", self.kv_cache_type, "--cache-type-v", self.kv_cache_type, "--temp", str(self.temperature), "--top-p", str(self.top_p), "--seed", str(self.seed)]
+        args = [
+            "--model",
+            str(self.model_path),
+            "--ctx-size",
+            str(self.context_size),
+            "--batch-size",
+            str(self.batch_size),
+            "--ubatch-size",
+            str(self.microbatch_size),
+            "--gpu-layers",
+            str(self.gpu_layers),
+            "--cache-type-k",
+            self.kv_cache_type,
+            "--cache-type-v",
+            self.kv_cache_type,
+            "--temp",
+            str(self.temperature),
+            "--top-p",
+            str(self.top_p),
+            "--seed",
+            str(self.seed),
+        ]
         if self.threads is not None:
             args.extend(["--threads", str(self.threads)])
         if self.flash_attention:

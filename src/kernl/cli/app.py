@@ -28,8 +28,10 @@ CONFIG_DIR = DATA_DIR / "configs"
 register_models(app)
 register_benchmark(app)
 
+
 def get_store() -> Store:
     return Store(DATA_DIR / "kernl.sqlite3")
+
 
 def display_profile(profile) -> None:
     table = Table(title="Hardware profile", border_style="magenta")
@@ -67,107 +69,218 @@ def display_profile(profile) -> None:
     for warning in profile.warnings:
         console.print(f"[yellow]Warning:[/] {warning}")
 
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         render_banner(console, __version__)
-        console.print("[magenta]>[/] Welcome to [bold bright_magenta]Kernl[/]. Run [bold]kernl init[/] to begin.")
+        console.print(
+            "[magenta]>[/] Welcome to [bold bright_magenta]Kernl[/]. Run [bold]kernl init[/] to begin."
+        )
+
 
 @app.command()
 def init() -> None:
-    store = get_store(); render_banner(console, __version__)
-    provider = typer.prompt("Provider (local/gemini/groq)", default="local").strip().lower()
-    if provider not in {"local", "gemini", "groq"}: raise typer.BadParameter("Choose local, gemini, or groq")
+    store = get_store()
+    render_banner(console, __version__)
+    provider = (
+        typer.prompt("Provider (local/gemini/groq)", default="local").strip().lower()
+    )
+    if provider not in {"local", "gemini", "groq"}:
+        raise typer.BadParameter("Choose local, gemini, or groq")
     store.set("provider", provider)
     if provider != "local":
-        secret = typer.prompt(f"{provider} API key", hide_input=True, confirmation_prompt=True); set_secret(provider, secret)
-        console.print("[green]Credential stored in the OS keyring; it was not written to SQLite.[/]")
-    profile = scan(); store.save_profile(profile); store.set("onboarding_complete", "1")
-    console.print("[green]Onboarding complete. Hardware profile saved.[/]"); display_profile(profile)
+        secret = typer.prompt(
+            f"{provider} API key", hide_input=True, confirmation_prompt=True
+        )
+        set_secret(provider, secret)
+        console.print(
+            "[green]Credential stored in the OS keyring; it was not written to SQLite.[/]"
+        )
+    profile = scan()
+    store.save_profile(profile)
+    store.set("onboarding_complete", "1")
+    console.print("[green]Onboarding complete. Hardware profile saved.[/]")
+    display_profile(profile)
+
 
 @app.command("scan")
 def scan_command() -> None:
-    profile = scan(); get_store().save_profile(profile); display_profile(profile)
+    profile = scan()
+    get_store().save_profile(profile)
+    display_profile(profile)
+
 
 @app.command("profile")
 def profile_command(action: str = typer.Argument("show")) -> None:
-    if action != "show": raise typer.BadParameter("Only 'show' is supported")
+    if action != "show":
+        raise typer.BadParameter("Only 'show' is supported")
     profile = get_store().latest_profile()
-    if profile is None: raise typer.BadParameter("No profile found. Run kernl init or kernl scan.")
+    if profile is None:
+        raise typer.BadParameter("No profile found. Run kernl init or kernl scan.")
     display_profile(profile)
 
-provider_app = typer.Typer(help="Manage AI providers"); app.add_typer(provider_app, name="provider")
+
+provider_app = typer.Typer(help="Manage AI providers")
+app.add_typer(provider_app, name="provider")
+
 
 @provider_app.command("list")
 def provider_list() -> None:
     selected = get_store().get("provider") or "not configured"
     for provider in ("local", "gemini", "groq"):
-        marker = "[bold bright_magenta]→[/] " if provider == selected else "  "; console.print(f"{marker}{provider}")
+        marker = "[bold bright_magenta]→[/] " if provider == selected else "  "
+        console.print(f"{marker}{provider}")
+
 
 @provider_app.command("add")
 def provider_add(provider: str = typer.Argument(...)) -> None:
-    if provider not in {"gemini", "groq"}: raise typer.BadParameter("Only gemini or groq accepts an API key")
-    secret = typer.prompt("API key", hide_input=True, confirmation_prompt=True); set_secret(provider, secret); get_store().set("provider", provider)
+    if provider not in {"gemini", "groq"}:
+        raise typer.BadParameter("Only gemini or groq accepts an API key")
+    secret = typer.prompt("API key", hide_input=True, confirmation_prompt=True)
+    set_secret(provider, secret)
+    get_store().set("provider", provider)
     console.print("[green]Provider credential stored securely.[/]")
+
 
 @provider_app.command("test")
 def provider_test() -> None:
     provider = get_store().get("provider") or "local"
-    if provider == "local": console.print("[green]Local-only provider is ready; no network request is required.[/]")
-    elif has_secret(provider): console.print(f"[yellow]{provider} credential exists. Live provider validation is deferred until the provider adapter is implemented.[/]")
-    else: console.print(f"[red]No credential stored for {provider}.[/]")
+    if provider == "local":
+        console.print(
+            "[green]Local-only provider is ready; no network request is required.[/]"
+        )
+    elif has_secret(provider):
+        console.print(
+            f"[yellow]{provider} credential exists. Live provider validation is deferred until the provider adapter is implemented.[/]"
+        )
+    else:
+        console.print(f"[red]No credential stored for {provider}.[/]")
 
-models_local_app = typer.Typer(help="Inspect local model files"); app.add_typer(models_local_app, name="model")
+
+models_local_app = typer.Typer(help="Inspect local model files")
+app.add_typer(models_local_app, name="model")
+
 
 @models_local_app.command("inspect")
 def model_inspect(
     path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
 ) -> None:
-    try: metadata = GGUFReader().read(path)
-    except GGUFError as exc: raise typer.BadParameter(str(exc)) from exc
-    for key, value in (("Architecture", metadata.architecture), ("Parameters", metadata.parameter_count), ("Context", metadata.context_length), ("Embedding", metadata.embedding_length), ("Blocks", metadata.block_count), ("File bytes", metadata.file_size_bytes)):
+    try:
+        metadata = GGUFReader().read(path)
+    except GGUFError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for key, value in (
+        ("Architecture", metadata.architecture),
+        ("Parameters", metadata.parameter_count),
+        ("Context", metadata.context_length),
+        ("Embedding", metadata.embedding_length),
+        ("Blocks", metadata.block_count),
+        ("File bytes", metadata.file_size_bytes),
+    ):
         console.print(f"[bold]{key}:[/] {value if value is not None else 'UNKNOWN'}")
+
 
 @models_local_app.command("estimate")
 def model_estimate(
-    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)], quantization: str = typer.Option("", "--quantization"), available_gb: float | None = typer.Option(None, "--available-gb")) -> None:
-    try: metadata = GGUFReader().read(path)
-    except GGUFError as exc: raise typer.BadParameter(str(exc)) from exc
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    quantization: str = typer.Option("", "--quantization"),
+    available_gb: float | None = typer.Option(None, "--available-gb"),
+) -> None:
+    try:
+        metadata = GGUFReader().read(path)
+    except GGUFError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     available = int(available_gb * 1024**3) if available_gb is not None else None
-    estimate = estimate_memory(parameter_count=metadata.parameter_count, quantization=quantization or None, context_tokens=metadata.context_length or 4096, layers=metadata.block_count, embedding_length=metadata.embedding_length, available_bytes=available)
-    console.print(f"Estimated total bytes: {estimate.total_bytes if estimate.total_bytes is not None else 'UNKNOWN'}")
-    console.print(f"Fits available memory: {estimate.fits if estimate.fits is not None else 'UNKNOWN'}")
-    for warning in estimate.warnings: console.print(f"[yellow]Warning:[/] {warning}")
+    estimate = estimate_memory(
+        parameter_count=metadata.parameter_count,
+        quantization=quantization or None,
+        context_tokens=metadata.context_length or 4096,
+        layers=metadata.block_count,
+        embedding_length=metadata.embedding_length,
+        available_bytes=available,
+    )
+    console.print(
+        f"Estimated total bytes: {estimate.total_bytes if estimate.total_bytes is not None else 'UNKNOWN'}"
+    )
+    console.print(
+        f"Fits available memory: {estimate.fits if estimate.fits is not None else 'UNKNOWN'}"
+    )
+    for warning in estimate.warnings:
+        console.print(f"[yellow]Warning:[/] {warning}")
 
-runtime_app = typer.Typer(help="Manage local inference runtime"); app.add_typer(runtime_app, name="runtime")
+
+runtime_app = typer.Typer(help="Manage local inference runtime")
+app.add_typer(runtime_app, name="runtime")
+
 
 @runtime_app.command("install")
-def runtime_install(url: str, sha256: str, filename: str, approve: bool = typer.Option(False, "--approve")) -> None:
-    try: target = RuntimeInstaller().install(RuntimeArtifact(url, sha256, filename), DATA_DIR / "runtime", approve_install=approve)
-    except (InstallationError, PermissionError) as exc: raise typer.BadParameter(str(exc)) from exc
+def runtime_install(
+    url: str,
+    sha256: str,
+    filename: str,
+    approve: bool = typer.Option(False, "--approve"),
+) -> None:
+    try:
+        target = RuntimeInstaller().install(
+            RuntimeArtifact(url, sha256, filename),
+            DATA_DIR / "runtime",
+            approve_install=approve,
+        )
+    except (InstallationError, PermissionError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     console.print(f"[green]Installed verified runtime:[/] {target}")
+
 
 @runtime_app.command("status")
 def runtime_status(executable: str = typer.Option("llama-cli", "--executable")) -> None:
     found = shutil.which(executable)
-    console.print(f"[green]Found:[/] {found}" if found else f"[yellow]Not found:[/] {executable}")
+    console.print(
+        f"[green]Found:[/] {found}" if found else f"[yellow]Not found:[/] {executable}"
+    )
 
-config_app = typer.Typer(help="Manage runtime configurations"); app.add_typer(config_app, name="config")
+
+config_app = typer.Typer(help="Manage runtime configurations")
+app.add_typer(config_app, name="config")
+
 
 @config_app.command("save")
-def config_save(name: str, model_path: Path, context_size: int = 4096, gpu_layers: int = 0) -> None:
-    path = ConfigStore(CONFIG_DIR).save(name, RuntimeConfig(model_path=model_path, context_size=context_size, gpu_layers=gpu_layers)); console.print(f"[green]Saved:[/] {path}")
+def config_save(
+    name: str, model_path: Path, context_size: int = 4096, gpu_layers: int = 0
+) -> None:
+    path = ConfigStore(CONFIG_DIR).save(
+        name,
+        RuntimeConfig(
+            model_path=model_path, context_size=context_size, gpu_layers=gpu_layers
+        ),
+    )
+    console.print(f"[green]Saved:[/] {path}")
+
 
 @config_app.command("show")
 def config_show(name: str) -> None:
     console.print_json(data=ConfigStore(CONFIG_DIR).load(name).export())
 
+
 @app.command()
 def doctor() -> None:
-    console.print(f"[green]OK[/] Kernl version: {__version__}"); console.print(f"[green]OK[/] Data directory: {DATA_DIR}"); console.print("[green]OK[/] SQLite store: available"); console.print("[yellow]Deferred:[/] provider API validation, runtime execution, and end-to-end benchmarks require local credentials/binaries.")
+    console.print(f"[green]OK[/] Kernl version: {__version__}")
+    console.print(f"[green]OK[/] Data directory: {DATA_DIR}")
+    console.print("[green]OK[/] SQLite store: available")
+    console.print(
+        "[yellow]Deferred:[/] provider API validation, runtime execution, and end-to-end benchmarks require local credentials/binaries."
+    )
+
 
 @app.command()
 def agent() -> None:
-    render_banner(console, __version__); console.print("[bold]Restricted agent workspace[/]"); console.print("Available actions: scan, profile show, provider list, models search, model inspect/estimate, runtime status, benchmark run."); console.print("No unrestricted shell execution is exposed.")
+    render_banner(console, __version__)
+    console.print("[bold]Restricted agent workspace[/]")
+    console.print(
+        "Available actions: scan, profile show, provider list, models search, model inspect/estimate, runtime status, benchmark run."
+    )
+    console.print("No unrestricted shell execution is exposed.")
 
-if __name__ == "__main__": app()
+
+if __name__ == "__main__":
+    app()

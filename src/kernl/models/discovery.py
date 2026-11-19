@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
 from huggingface_hub import HfApi
+
 
 @dataclass(frozen=True)
 class ModelCandidate:
@@ -15,18 +17,24 @@ class ModelCandidate:
     tags: tuple[str, ...]
     gated: bool | None
 
+
 class DiscoveryError(RuntimeError):
     """Raised when Hugging Face discovery cannot complete."""
+
 
 class HuggingFaceDiscovery:
     def __init__(self, api: HfApi | None = None) -> None:
         self.api = api or HfApi()
 
-    def search(self, query: str = "", task: str | None = None, limit: int = 20) -> list[ModelCandidate]:
+    def search(
+        self, query: str = "", task: str | None = None, limit: int = 20
+    ) -> list[ModelCandidate]:
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         try:
-            models = self.api.list_models(search=query or None, filter=task or None, limit=limit, full=True)
+            models = self.api.list_models(
+                search=query or None, filter=task or None, limit=limit, full=True
+            )
             return [self._map(model) for model in models]
         except Exception as exc:
             raise DiscoveryError(f"Hugging Face discovery failed: {exc}") from exc
