@@ -17,7 +17,10 @@ prepare a local llama.cpp runtime.
   - Unsupported or ambiguous values remain UNKNOWN; Kernl does not substitute
     zero or guess.
 - GGUF metadata inspection and model-memory estimation.
-- Hugging Face model discovery, compatibility assessment, and recommendation.
+- Hugging Face model discovery, GGUF metadata inspection, and model recommendations.
+  Compatibility is tri-state: known fit, known constraint failure, or unknown
+  until sufficient memory metadata is available. Missing model size is never
+  treated as proof of compatibility.
 - Verified runtime artifact installation and local runtime configuration.
 - SQLite persistence for settings and hardware profiles.
 

@@ -23,3 +23,18 @@ def test_config_store_round_trip(tmp_path: Path):
     store.save("default", config)
     loaded = store.load("default")
     assert loaded.model_path == config.model_path
+
+
+def test_recommendation_ranks_known_fit_above_unknown_models():
+    models = [
+        ModelCandidate("unknown/model", "unknown", 10_000, 1, None, None, (), False),
+        ModelCandidate("known/model", "known", 1, 1, None, None, (), False),
+    ]
+    result = recommend(
+        models,
+        available_ram_bytes=1_000,
+        required_ram_bytes_by_repo={"known/model": 900},
+    )
+    assert result[0].model.repo_id == "known/model"
+    assert result[0].compatibility.compatible is True
+    assert result[1].compatibility.compatible is None
