@@ -202,7 +202,8 @@ def test_find_powershell_checks_standard_install_path(monkeypatch):
     executable = scanner._find_powershell()
 
     assert executable is not None
-    assert executable.endswith("WindowsPowerShell\\v1.0\\powershell.exe")
+    normalized_path = executable.replace("\\", "/")
+    assert normalized_path.endswith("WindowsPowerShell/v1.0/powershell.exe")
 
 
 def test_find_nvidia_smi_checks_system32_path(monkeypatch):
