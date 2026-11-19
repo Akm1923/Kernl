@@ -8,6 +8,16 @@ from kernl import __version__
 
 VERSION = __version__
 
+
+def _brand_label(encoding: str) -> str:
+    """Use the lightning mark only when the terminal encoding supports it."""
+    try:
+        "⚡".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return "KERNL"
+    return "⚡ KERNL"
+
+
 _ART = """      /\\        _  __
   ___/  \\___   | |/ /___ _ __ _ __
  /  / /\\ \\  \\  | ' // _ \\ '__| '_ \\
@@ -17,9 +27,10 @@ _ART = """      /\\        _  __
 
 def render_banner(console: Console, version: str = VERSION) -> None:
     """Render Kernl identity locally with a compact terminal fallback."""
+    brand = _brand_label(console.encoding)
     if console.width < 88:
-        art = Text("⚡ KERNL", style="bold bright_magenta")
-        nav = Text("CHAT · AGENTS · MODELS · RUNTIME · BENCHMARK", style="magenta")
+        art = Text(brand, style="bold bright_magenta")
+        nav = Text("CHAT | AGENTS | MODELS | RUNTIME | BENCHMARK", style="magenta")
     else:
         art = Text(_ART, style="bold bright_magenta")
         nav = Text(
@@ -32,7 +43,7 @@ def render_banner(console: Console, version: str = VERSION) -> None:
     console.print(
         Panel(
             body,
-            title="[bold white]⚡ KERNL[/]",
+            title=f"[bold white]{brand}[/]",
             title_align="left",
             subtitle=f"[dim]v{version}[/]",
             border_style="magenta",

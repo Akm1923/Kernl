@@ -130,7 +130,7 @@ app.add_typer(provider_app, name="provider")
 def provider_list() -> None:
     selected = get_store().get("provider") or "not configured"
     for provider in ("local", "gemini", "groq"):
-        marker = "[bold bright_magenta]→[/] " if provider == selected else "  "
+        marker = "[bold bright_magenta]>[/] " if provider == selected else "  "
         console.print(f"{marker}{provider}")
 
 
