@@ -32,6 +32,7 @@ class RuntimeConfig(BaseModel):
     gpu_layers: int = Field(default=0, ge=-1, le=10_000)
     flash_attention: bool = False
     kv_cache_type: str = "f16"
+    kv_cache_on_gpu: bool = True
     temperature: float = Field(default=0.7, ge=0.0, le=5.0)
     top_p: float = Field(default=0.95, gt=0.0, le=1.0)
     seed: int = 0
@@ -72,7 +73,7 @@ class RuntimeConfig(BaseModel):
             "--ubatch-size",
             str(self.microbatch_size),
             "--gpu-layers",
-            str(self.gpu_layers),
+            "all" if self.gpu_layers == -1 else str(self.gpu_layers),
             "--cache-type-k",
             self.kv_cache_type,
             "--cache-type-v",
@@ -88,6 +89,8 @@ class RuntimeConfig(BaseModel):
             args.extend(["--threads", str(self.threads)])
         if self.flash_attention:
             args.extend(["--flash-attn", "on"])
+        if not self.kv_cache_on_gpu:
+            args.append("--no-kv-offload")
         if self.backend != Backend.AUTO:
             args.extend(["--split-mode", "none"] if self.backend == Backend.CPU else [])
         if self.mode == RuntimeMode.SERVER:

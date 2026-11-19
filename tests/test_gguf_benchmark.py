@@ -32,6 +32,8 @@ def test_gguf_metadata_reader(tmp_path: Path):
         ("llama.context_length", 4096),
         ("llama.embedding_length", 4096),
         ("llama.block_count", 32),
+        ("llama.attention.head_count", 32),
+        ("llama.attention.head_count_kv", 8),
     ]
     with path.open("wb") as handle:
         handle.write(b"GGUF")
@@ -43,6 +45,8 @@ def test_gguf_metadata_reader(tmp_path: Path):
     assert result.architecture == "llama"
     assert result.context_length == 4096
     assert result.block_count == 32
+    assert result.attention_head_count == 32
+    assert result.attention_head_count_kv == 8
 
 
 def test_gguf_rejects_bad_magic(tmp_path: Path):
@@ -72,3 +76,25 @@ def test_benchmark_rejects_invalid_callback(tmp_path: Path):
         BenchmarkRunner().run(
             runtime="test", model=model, prompts=["hello"], infer=lambda _: 0
         )
+
+
+def test_gguf_metadata_constructor_remains_backward_compatible(tmp_path: Path):
+    from kernl.models.gguf import GGUFMetadata
+
+    metadata = GGUFMetadata(
+        tmp_path / "legacy.gguf",
+        3,
+        0,
+        0,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        0,
+        {},
+    )
+
+    assert metadata.attention_head_count is None
+    assert metadata.attention_head_count_kv is None

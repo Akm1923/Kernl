@@ -24,6 +24,8 @@ class GGUFMetadata:
     quantization_version: int | None
     file_size_bytes: int
     metadata: dict[str, Any]
+    attention_head_count: int | None = None
+    attention_head_count_kv: int | None = None
 
 
 class GGUFReader:
@@ -58,6 +60,12 @@ class GGUFReader:
         context_length = self._as_int(metadata.get(f"{prefix}context_length"))
         embedding_length = self._as_int(metadata.get(f"{prefix}embedding_length"))
         block_count = self._as_int(metadata.get(f"{prefix}block_count"))
+        attention_head_count = self._as_int(
+            metadata.get(f"{prefix}attention.head_count")
+        )
+        attention_head_count_kv = self._as_int(
+            metadata.get(f"{prefix}attention.head_count_kv")
+        )
         parameter_count = self._as_int(metadata.get("general.parameter_count"))
         quantization_version = self._as_int(
             metadata.get("general.quantization_version")
@@ -72,6 +80,8 @@ class GGUFReader:
             context_length=context_length,
             embedding_length=embedding_length,
             block_count=block_count,
+            attention_head_count=attention_head_count,
+            attention_head_count_kv=attention_head_count_kv,
             quantization_version=quantization_version,
             file_size_bytes=path.stat().st_size,
             metadata=metadata,

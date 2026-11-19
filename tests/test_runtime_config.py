@@ -94,3 +94,35 @@ def test_memory_estimate_rejects_negative_available_memory():
         pass
     else:
         raise AssertionError("expected negative available memory to be rejected")
+
+
+def test_runtime_config_can_keep_kv_cache_on_cpu(tmp_path: Path):
+    config = RuntimeConfig(
+        model_path=tmp_path / "model.gguf",
+        gpu_layers=12,
+        kv_cache_on_gpu=False,
+    )
+
+    assert "--no-kv-offload" in config.runtime_arguments()
+
+
+def test_legacy_runtime_config_defaults_kv_cache_to_gpu(tmp_path: Path):
+    import json
+
+    path = tmp_path / "legacy.json"
+    path.write_text(
+        json.dumps({"model_path": str(tmp_path / "model.gguf")}),
+        encoding="utf-8",
+    )
+    loaded = RuntimeConfig.model_validate_json(path.read_text(encoding="utf-8"))
+
+    assert loaded.kv_cache_on_gpu is True
+
+
+def test_all_gpu_layers_uses_llama_cpp_all_keyword(tmp_path: Path):
+    config = RuntimeConfig(model_path=tmp_path / "model.gguf", gpu_layers=-1)
+
+    args = config.runtime_arguments()
+    gpu_layers_index = args.index("--gpu-layers")
+
+    assert args[gpu_layers_index + 1] == "all"

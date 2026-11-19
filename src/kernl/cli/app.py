@@ -15,6 +15,7 @@ from kernl.cli.models import register_models
 from kernl.hardware.scanner import scan
 from kernl.models.gguf import GGUFError, GGUFReader
 from kernl.models.memory import estimate_memory
+from kernl.models.planner import plan_model_memory
 from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
 from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
@@ -181,6 +182,70 @@ def model_inspect(
         console.print(f"[bold]{key}:[/] {value if value is not None else 'UNKNOWN'}")
 
 
+@models_local_app.command("plan")
+def model_plan(
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    gpu_layers: int = typer.Option(0, "--gpu-layers", min=-1),
+    gpu_index: int = typer.Option(0, "--gpu-index", min=0),
+    context_tokens: int | None = typer.Option(None, "--context", min=1),
+    kv_cache_type: str = typer.Option("f16", "--kv-cache-type"),
+    kv_cache_on_cpu: bool = typer.Option(False, "--kv-cache-on-cpu"),
+) -> None:
+    """Estimate CPU RAM and selected GPU VRAM needs for a local GGUF model."""
+    try:
+        metadata = GGUFReader().read(path)
+        plan = plan_model_memory(
+            metadata,
+            scan(),
+            gpu_layers=gpu_layers,
+            gpu_index=gpu_index,
+            context_tokens=context_tokens,
+            kv_cache_type=kv_cache_type,
+            kv_cache_on_gpu=not kv_cache_on_cpu,
+        )
+    except (GGUFError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    def format_bytes(value: int | None) -> str:
+        return f"{value / 1024**3:.2f} GiB" if value is not None else "UNKNOWN"
+
+    def fit_label(value: bool | None) -> str:
+        return {True: "YES", False: "NO", None: "UNKNOWN"}[value]
+
+    console.print(f"[bold]Model:[/] {path}")
+    console.print(
+        f"[bold]Model weights (GGUF file size):[/] {format_bytes(plan.model_bytes)}"
+    )
+    console.print(f"[bold]KV cache estimate:[/] {format_bytes(plan.kv_cache_bytes)}")
+    cpu_requirement_label = (
+        "known minimum"
+        if plan.kv_cache_bytes is None and (plan.gpu_layers == 0 or kv_cache_on_cpu)
+        else "estimated"
+    )
+    gpu_requirement_label = (
+        "known minimum"
+        if plan.kv_cache_bytes is None and plan.gpu_layers > 0 and not kv_cache_on_cpu
+        else "estimated"
+    )
+    console.print(
+        f"[bold]CPU RAM:[/] {format_bytes(plan.cpu_required_bytes)} {cpu_requirement_label} / "
+        f"{format_bytes(plan.cpu_available_bytes)} available — {fit_label(plan.cpu_fits)}"
+    )
+    if plan.gpu_name is not None:
+        console.print(
+            f"[bold]{plan.gpu_name} VRAM:[/] {format_bytes(plan.gpu_required_bytes)} {gpu_requirement_label} / "
+            f"{format_bytes(plan.gpu_budget_bytes)} budget — {fit_label(plan.gpu_fits)}"
+        )
+        console.print(f"[bold]GPU layers:[/] {plan.gpu_layers}")
+    else:
+        console.print("[bold]GPU offload:[/] disabled")
+    console.print(
+        f"[bold]Overall compatibility:[/] {fit_label(plan.overall_compatible)}"
+    )
+    for warning in plan.warnings:
+        console.print(f"[yellow]Warning:[/] {warning}")
+
+
 @models_local_app.command("estimate")
 def model_estimate(
     path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
@@ -246,12 +311,19 @@ app.add_typer(config_app, name="config")
 
 @config_app.command("save")
 def config_save(
-    name: str, model_path: Path, context_size: int = 4096, gpu_layers: int = 0
+    name: str,
+    model_path: Path,
+    context_size: int = 4096,
+    gpu_layers: int = 0,
+    kv_cache_on_cpu: bool = typer.Option(False, "--kv-cache-on-cpu"),
 ) -> None:
     path = ConfigStore(CONFIG_DIR).save(
         name,
         RuntimeConfig(
-            model_path=model_path, context_size=context_size, gpu_layers=gpu_layers
+            model_path=model_path,
+            context_size=context_size,
+            gpu_layers=gpu_layers,
+            kv_cache_on_gpu=not kv_cache_on_cpu,
         ),
     )
     console.print(f"[green]Saved:[/] {path}")
