@@ -349,7 +349,7 @@ def agent() -> None:
     render_banner(console, __version__)
     console.print("[bold]Restricted agent workspace[/]")
     console.print(
-        "Available actions: scan, profile show, provider list, models search, model inspect/estimate, runtime status, benchmark run."
+        "Available actions: scan, profile show, provider list, models search, model inspect/estimate/plan, runtime status, benchmark run."
     )
     console.print("No unrestricted shell execution is exposed.")
 

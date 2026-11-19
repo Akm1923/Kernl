@@ -213,3 +213,9 @@ def test_negative_profile_memory_values_are_rejected():
             make_profile(gpu_memory=(-1,)),
             gpu_layers=1,
         )
+
+
+def test_invalid_attention_head_geometry_is_rejected():
+    metadata = make_metadata(embedding=4095)
+    with pytest.raises(ValueError, match="divisible"):
+        plan_model_memory(metadata, make_profile(), gpu_layers=0)

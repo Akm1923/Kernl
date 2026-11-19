@@ -110,6 +110,10 @@ def plan_model_memory(
         if heads is not None and kv_heads is not None:
             if heads < 1 or kv_heads < 1 or kv_heads > heads:
                 raise ValueError("GGUF attention head counts are invalid")
+            if embedding % heads:
+                raise ValueError(
+                    "GGUF embedding length must be divisible by attention head count"
+                )
             kv_embedding = embedding * kv_heads // heads
         else:
             warnings.append(
