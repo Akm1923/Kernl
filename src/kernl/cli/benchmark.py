@@ -56,7 +56,7 @@ def benchmark_run(
             runtime=f"llama.cpp:{Path(resolved).name}",
             model=config.model_path,
             prompts=prompt,
-            infer=lambda text: adapter.infer_once(
+            infer=lambda text: adapter.infer_once_telemetry(
                 config, text, approve_execution=True, timeout=timeout
             ),
         )
@@ -90,12 +90,37 @@ def benchmark_run(
     console.print(
         f"[bold]P95 request latency:[/] {_format_metric(result.p95_latency_seconds, ' s')}"
     )
+    console.print(
+        f"[bold]Median time to first output:[/] "
+        f"{_format_metric(result.median_time_to_first_output_seconds, ' s')}"
+    )
+    console.print(
+        f"[bold]Median model load time:[/] "
+        f"{_format_metric(result.median_load_time_seconds, ' s')}"
+    )
+    console.print(
+        f"[bold]Median prompt throughput:[/] "
+        f"{_format_metric(result.median_prompt_tokens_per_second, ' tokens/s')}"
+    )
+    console.print(
+        f"[bold]Peak process RAM:[/] {_format_metric(result.peak_rss_bytes, ' B')}"
+    )
+    if result.peak_vram_bytes is not None:
+        console.print(
+            f"[bold]Peak process VRAM:[/] {_format_metric(result.peak_vram_bytes, ' B')}"
+        )
+    else:
+        console.print(
+            "[bold]Peak process VRAM:[/] UNKNOWN "
+            "[dim](nvidia-smi process sampling unavailable)[/]"
+        )
     if output is not None:
         console.print(f"[green]Raw JSON:[/] {output}")
         console.print(f"[green]Raw CSV:[/] {output.with_suffix('.csv')}")
     console.print(
-        "[yellow]Unmeasured:[/] load time, prompt-processing/eval split, peak RAM, "
-        "and peak VRAM require a richer runtime telemetry source and are not invented here."
+        "[dim]All values above come from this run's stdout timing, llama.cpp "
+        "stderr timings, and live psutil/nvidia-smi sampling; absent signals "
+        "are shown as UNKNOWN and are never estimated.[/]"
     )
 
 
@@ -114,7 +139,15 @@ def benchmark_compare(left: str, right: str) -> None:
         raise typer.BadParameter("No stored benchmark for: " + ", ".join(missing))
 
     table = Table(title="Benchmark comparison", border_style="magenta")
-    for column in ("Side", "Config", "Median", "P95 latency", "Origin"):
+    for column in (
+        "Side",
+        "Config",
+        "Median",
+        "P95 latency",
+        "TT first out",
+        "Load time",
+        "Prompt t/s",
+    ):
         table.add_column(column)
     for side, name, record in records:
         assert record is not None
@@ -123,10 +156,44 @@ def benchmark_compare(left: str, right: str) -> None:
             name,
             _format_metric(record.get("median_tokens_per_second"), " tokens/s"),
             _format_metric(record.get("p95_latency_seconds"), " s"),
-            ValueOrigin.MEASURED.value,
+            _format_metric(record.get("median_time_to_first_output_seconds"), " s"),
+            _format_metric(record.get("median_load_time_seconds"), " s"),
+            _format_metric(record.get("median_prompt_tokens_per_second"), " tokens/s"),
         )
     console.print(table)
+
+    resources = Table(
+        title="Benchmark resources and provenance", border_style="magenta"
+    )
+    for column in ("Side", "Config", "Peak RAM", "Peak VRAM", "Origin"):
+        resources.add_column(column)
+    for side, name, record in records:
+        assert record is not None
+        present = [
+            record.get(key)
+            for key in (
+                "median_tokens_per_second",
+                "p95_latency_seconds",
+                "median_time_to_first_output_seconds",
+                "median_load_time_seconds",
+                "median_prompt_tokens_per_second",
+            )
+        ]
+        origin = (
+            ValueOrigin.MEASURED.value
+            if any(value is not None for value in present)
+            else ValueOrigin.UNKNOWN.value
+        )
+        resources.add_row(
+            side,
+            name,
+            _format_metric(record.get("peak_rss_bytes"), " B"),
+            _format_metric(record.get("peak_vram_bytes"), " B"),
+            origin,
+        )
+    console.print(resources)
     console.print(
         "[dim]Only values produced by observed llama.cpp inference are compared; "
-        "no estimated throughput is mixed into this table.[/]"
+        "no estimated throughput is mixed into this table. UNKNOWN means the "
+        "signal was not observable in that run.[/]"
     )
