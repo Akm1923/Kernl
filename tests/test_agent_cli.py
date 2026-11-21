@@ -94,11 +94,14 @@ def test_agent_run_denies_unapproved_execution_and_audits(monkeypatch, tmp_path)
     data_dir = prepare(monkeypatch, tmp_path)
 
     result = runner.invoke(
-        app, ["agent", "run", "runtime_verify", "--arg", "config_name=demo"]
+        app,
+        ["agent", "run", "runtime_verify", "--arg", "config_name=demo"],
+        env={"COLUMNS": "60"},
     )
 
     assert result.exit_code != 0
-    assert "requires --approve" in result.output
+    assert "approval required" in result.output.lower()
+    assert "--approve" in result.output
     from kernl.cli.app import get_store
 
     rows = get_store().recent_agent_actions()

@@ -108,7 +108,7 @@ def agent_run(
         ctx.store.record_agent_action(
             tool, arguments, False, "denied: explicit approval required"
         )
-        raise typer.BadParameter(f"agent tool {tool} requires --approve")
+        raise typer.BadParameter("Approval required: --approve")
 
     try:
         result = definition.handler(inputs, ctx)
