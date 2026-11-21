@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import shutil
 from pathlib import Path
 from typing import Annotated
@@ -14,6 +15,8 @@ from kernl.cli.banner import render_banner
 from kernl.cli.benchmark import register_benchmark
 from kernl.cli.models import register_models
 from kernl.hardware.scanner import scan
+from kernl.models.discovery import DiscoveryError, HuggingFaceDiscovery
+from kernl.models.download import DownloadError, ModelDownloader
 from kernl.models.gguf import GGUFError, GGUFReader
 from kernl.models.memory import estimate_memory
 from kernl.models.planner import plan_model_memory, recommend_gpu_layers
@@ -27,6 +30,8 @@ from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
 from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
 from kernl.runtime.llama_cpp import LlamaCppAdapter, RuntimeErrorBase
+from kernl.runtime.manager import ProcessError, RuntimeProcessManager
+from kernl.runtime.process_store import ProcessStore
 from kernl.security import get_secret, set_secret
 from kernl.storage.db import Store
 
@@ -34,6 +39,8 @@ app = typer.Typer(help="Kernl — local AI compute platform", no_args_is_help=Fa
 console = Console()
 DATA_DIR = Path.home() / ".kernl"
 CONFIG_DIR = DATA_DIR / "configs"
+PROCESS_STORE_PATH = DATA_DIR / "processes.json"
+LOG_DIR = DATA_DIR / "logs"
 register_models(app)
 register_benchmark(app)
 register_agent(app)
@@ -41,6 +48,10 @@ register_agent(app)
 
 def get_store() -> Store:
     return Store(DATA_DIR / "kernl.sqlite3")
+
+
+def get_process_manager() -> RuntimeProcessManager:
+    return RuntimeProcessManager(ProcessStore(PROCESS_STORE_PATH), LOG_DIR)
 
 
 def display_profile(profile) -> None:
@@ -378,6 +389,80 @@ def model_estimate(
         console.print(f"[yellow]Warning:[/] {warning}")
 
 
+@app.command("download")
+def download_command(
+    repo_id: str,
+    filename: Annotated[
+        str | None,
+        typer.Option(
+            "--filename",
+            help="Repository file path; defaults to the smallest listed GGUF artifact",
+        ),
+    ] = None,
+    revision: Annotated[str | None, typer.Option("--revision")] = None,
+    destination: Annotated[
+        Path | None,
+        typer.Option("--destination", help="Local download directory", file_okay=False),
+    ] = None,
+    approve: Annotated[
+        bool,
+        typer.Option("--approve", help="Explicitly allow model artifact download"),
+    ] = False,
+) -> None:
+    """Download one verified Hugging Face model artifact after approval."""
+    if not approve:
+        raise typer.BadParameter(
+            "model download requires explicit approval via --approve"
+        )
+    try:
+        selected_filename = filename
+        if selected_filename is None:
+            inspection = HuggingFaceDiscovery().inspect(repo_id, revision=revision)
+            candidates = [
+                variant
+                for variant in inspection.variants
+                if variant.filename.lower().endswith(".gguf")
+            ]
+            if not candidates:
+                raise typer.BadParameter(
+                    "No GGUF artifact listed; pass --filename explicitly"
+                )
+            known = [
+                variant for variant in candidates if variant.size_bytes is not None
+            ]
+            selected = min(
+                known or candidates,
+                key=lambda variant: (
+                    variant.size_bytes is None,
+                    variant.size_bytes if variant.size_bytes is not None else 0,
+                    variant.filename,
+                ),
+            )
+            selected_filename = selected.filename
+            console.print(f"[bold]Selected artifact:[/] {selected_filename}")
+        result = ModelDownloader().download(
+            repo_id,
+            selected_filename,
+            revision=revision,
+            destination=destination,
+            approve_download=True,
+        )
+    except (DiscoveryError, DownloadError, PermissionError, ValueError) as exc:
+        console.print(f"[red]Download failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"[green]Downloaded:[/] {result.path}")
+    console.print(
+        f"[bold]Size:[/] {result.size_bytes} bytes  [bold]SHA-256:[/] {result.sha256}"
+    )
+    if result.verified:
+        console.print("[green]Verified:[/] SHA-256 matches Hugging Face metadata.")
+    else:
+        console.print(
+            "[yellow]Unverified:[/] repository metadata did not provide a SHA-256 LFS oid."
+        )
+
+
 runtime_app = typer.Typer(help="Manage local inference runtime")
 app.add_typer(runtime_app, name="runtime")
 
@@ -438,6 +523,154 @@ def runtime_verify(
     console.print(
         "[dim]Source: observed llama.cpp inference; no simulated throughput is reported.[/]"
     )
+
+
+def _resolve_runtime_executable(executable: str) -> Path:
+    resolved = shutil.which(executable)
+    if not resolved:
+        raise typer.BadParameter(f"llama.cpp executable not found: {executable}")
+    return Path(resolved)
+
+
+def _runtime_extra_args(executable: Path, prompt: str, n_predict: int) -> list[str]:
+    if "server" in executable.name.lower():
+        return []
+    return ["--prompt", prompt, "--n-predict", str(n_predict)]
+
+
+@app.command("run")
+def run_command(
+    name: str,
+    executable: str = typer.Option("llama-cli", "--executable"),
+    prompt: str = typer.Option("Hello", "--prompt"),
+    n_predict: int = typer.Option(128, "--n-predict", min=1, max=1_048_576),
+    approve: bool = typer.Option(
+        False, "--approve", help="Explicitly allow model execution"
+    ),
+) -> None:
+    """Launch a saved runtime configuration as a managed process."""
+    if not approve:
+        raise typer.BadParameter(
+            "runtime launch requires explicit approval via --approve"
+        )
+    resolved = _resolve_runtime_executable(executable)
+    try:
+        config = ConfigStore(CONFIG_DIR).load(name)
+        record = get_process_manager().launch(
+            config_name=name,
+            config=config,
+            executable=resolved,
+            approve_execution=True,
+            extra_args=_runtime_extra_args(resolved, prompt, n_predict),
+        )
+    except (
+        FileNotFoundError,
+        PermissionError,
+        ProcessError,
+        RuntimeErrorBase,
+        ValueError,
+    ) as exc:
+        console.print(f"[red]Launch failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Started:[/] PID {record.pid}")
+    console.print(f"[bold]Configuration:[/] {record.config_name}")
+    console.print(f"[bold]Log file:[/] {record.log_path}")
+    console.print(
+        "[dim]Use kernl processes, kernl logs, kernl stop, and kernl restart.[/]"
+    )
+
+
+@app.command("stop")
+def stop_command(pid: int) -> None:
+    """Stop one managed runtime process."""
+    try:
+        record = get_process_manager().stop(pid)
+    except (KeyError, ProcessError) as exc:
+        console.print(f"[red]Stop failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Stopped:[/] PID {record.pid} ({record.config_name})")
+
+
+@app.command("restart")
+def restart_command(
+    pid: int,
+    executable: str = typer.Option("llama-cli", "--executable"),
+    prompt: str = typer.Option("Hello", "--prompt"),
+    n_predict: int = typer.Option(128, "--n-predict", min=1, max=1_048_576),
+    approve: bool = typer.Option(
+        False, "--approve", help="Explicitly allow model execution"
+    ),
+) -> None:
+    """Stop and relaunch a managed runtime process."""
+    if not approve:
+        raise typer.BadParameter(
+            "runtime restart requires explicit approval via --approve"
+        )
+    manager = get_process_manager()
+    try:
+        existing = manager.status(pid)
+        config = ConfigStore(CONFIG_DIR).load(existing.config_name)
+        resolved = _resolve_runtime_executable(executable)
+        record = manager.restart(
+            pid,
+            config=config,
+            executable=resolved,
+            approve_execution=True,
+            extra_args=_runtime_extra_args(resolved, prompt, n_predict),
+        )
+    except (
+        FileNotFoundError,
+        KeyError,
+        PermissionError,
+        ProcessError,
+        RuntimeErrorBase,
+        ValueError,
+    ) as exc:
+        console.print(f"[red]Restart failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Restarted:[/] PID {record.pid} ({record.config_name})")
+
+
+@app.command("processes")
+def processes_command() -> None:
+    """List managed runtime processes and their observed status."""
+    records = get_process_manager().list()
+    if not records:
+        console.print("No managed runtime processes.")
+        return
+    table = Table(title="Managed runtime processes", border_style="magenta")
+    for column in ("PID", "Config", "Status", "Started", "Log"):
+        table.add_column(column)
+    for record in records:
+        started = dt.datetime.fromtimestamp(record.started_at, tz=dt.UTC).isoformat(
+            timespec="seconds"
+        )
+        table.add_row(
+            str(record.pid),
+            record.config_name,
+            record.status,
+            started,
+            record.log_path,
+        )
+    console.print(table)
+
+
+@app.command("logs")
+def logs_command(
+    pid: int,
+    limit: int = typer.Option(100, "--limit", min=1, max=10_000),
+) -> None:
+    """Show the tail of a managed runtime process log."""
+    try:
+        lines = get_process_manager().logs(pid, limit)
+    except (KeyError, ValueError) as exc:
+        console.print(f"[red]Logs failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    if not lines:
+        console.print("[yellow]No log lines available.[/]")
+        return
+    for line in lines:
+        console.print(line)
 
 
 config_app = typer.Typer(help="Manage runtime configurations")

@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,6 +30,7 @@ class ManagedProcess:
     config: RuntimeConfig
     started_at: float
     stderr_lines: list[str] = field(default_factory=list)
+    log_path: Path | None = None
 
 
 class LlamaCppAdapter:
@@ -66,24 +68,49 @@ class LlamaCppAdapter:
             output,
         )
 
-    def launch(self, config: RuntimeConfig, *, approve_execution: bool = False) -> int:
+    def launch(
+        self,
+        config: RuntimeConfig,
+        *,
+        approve_execution: bool = False,
+        log_path: Path | None = None,
+        extra_args: Sequence[str] = (),
+    ) -> int:
         if not approve_execution:
             raise PermissionError("model execution requires explicit approval")
+        if not self.executable.is_file():
+            raise RuntimeErrorBase(f"llama.cpp executable not found: {self.executable}")
         if not config.model_path.is_file():
             raise RuntimeErrorBase(f"model file not found: {config.model_path}")
+        arguments = [str(self.executable), *config.runtime_arguments(), *extra_args]
+        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         try:
-            process = subprocess.Popen(
-                [str(self.executable), *config.runtime_arguments()],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            )
+            if log_path is None:
+                process = subprocess.Popen(
+                    arguments,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    creationflags=creation_flags,
+                )
+            else:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("w", encoding="utf-8") as log_handle:
+                    process = subprocess.Popen(
+                        arguments,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        creationflags=creation_flags,
+                    )
         except OSError as exc:
             raise RuntimeErrorBase(f"could not start llama.cpp: {exc}") from exc
-        self._managed[process.pid] = ManagedProcess(process, config, time.monotonic())
+        self._managed[process.pid] = ManagedProcess(
+            process, config, time.monotonic(), log_path=log_path
+        )
         return process.pid
 
     def infer_once(
@@ -146,6 +173,11 @@ class LlamaCppAdapter:
             raise KeyError(f"unknown Kernl process: {pid}")
         if limit < 1:
             raise ValueError("limit must be positive")
+        if managed.log_path is not None and managed.log_path.is_file():
+            lines = managed.log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            return lines[-limit:]
         if managed.process.stderr is not None:
             while True:
                 line = managed.process.stderr.readline()
