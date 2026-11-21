@@ -27,10 +27,13 @@ prepare a local llama.cpp runtime.
   fits; it never claims a success based on estimated memory alone.
 - Runtime configs can keep the KV cache on CPU with `--kv-cache-on-cpu`; the
   generated llama.cpp arguments include `--no-kv-offload`.
-- Hugging Face model discovery and model recommendations.
-  Compatibility is tri-state: known fit, known constraint failure, or unknown
-  until sufficient memory metadata is available. Missing model size is never
-  treated as proof of compatibility.
+- Hugging Face model discovery, repo inspection, and model recommendations.
+  `kernl models inspect <repo-id>` lists GGUF variants, quantization, and remote
+  file sizes without downloading weights. `kernl models recommend` ranks search
+  results with tri-state compatibility: known fit, known constraint failure, or
+  unknown until sufficient memory metadata is available. Missing model size is
+  never treated as proof of compatibility; recommendations use GGUF file size
+  only and point to `kernl model plan --gpu-layers auto` for a full estimate.
 - Verified runtime artifact installation and local runtime configuration.
 - SQLite persistence for settings and hardware profiles.
 
@@ -70,6 +73,9 @@ kernl profile
 kernl model inspect .\\models\\your-model.gguf
 kernl model plan .\\models\\your-model.gguf --gpu-layers 20
 kernl model plan .\\models\\your-model.gguf --gpu-layers auto
+kernl models search "qwen"
+kernl models inspect Qwen/Qwen2.5-0.5B-Instruct-GGUF
+kernl models recommend "qwen"
 ```
 
 The CI matrix runs the test suite on Windows and Ubuntu with Python 3.11 and 3.13.
