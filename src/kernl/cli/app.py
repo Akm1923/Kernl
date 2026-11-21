@@ -17,11 +17,17 @@ from kernl.hardware.scanner import scan
 from kernl.models.gguf import GGUFError, GGUFReader
 from kernl.models.memory import estimate_memory
 from kernl.models.planner import plan_model_memory, recommend_gpu_layers
+from kernl.providers import (
+    ALL_PROVIDERS,
+    REMOTE_PROVIDERS,
+    redact_secret,
+    validate_provider,
+)
 from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
 from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
 from kernl.runtime.llama_cpp import LlamaCppAdapter, RuntimeErrorBase
-from kernl.security import has_secret, set_secret
+from kernl.security import get_secret, set_secret
 from kernl.storage.db import Store
 
 app = typer.Typer(help="Kernl — local AI compute platform", no_args_is_help=False)
@@ -90,7 +96,7 @@ def init() -> None:
     provider = (
         typer.prompt("Provider (local/gemini/groq)", default="local").strip().lower()
     )
-    if provider not in {"local", "gemini", "groq"}:
+    if provider not in ALL_PROVIDERS:
         raise typer.BadParameter("Choose local, gemini, or groq")
     store.set("provider", provider)
     if provider != "local":
@@ -132,14 +138,14 @@ app.add_typer(provider_app, name="provider")
 @provider_app.command("list")
 def provider_list() -> None:
     selected = get_store().get("provider") or "not configured"
-    for provider in ("local", "gemini", "groq"):
+    for provider in ALL_PROVIDERS:
         marker = "[bold bright_magenta]>[/] " if provider == selected else "  "
         console.print(f"{marker}{provider}")
 
 
 @provider_app.command("add")
 def provider_add(provider: str = typer.Argument(...)) -> None:
-    if provider not in {"gemini", "groq"}:
+    if provider not in REMOTE_PROVIDERS:
         raise typer.BadParameter("Only gemini or groq accepts an API key")
     secret = typer.prompt("API key", hide_input=True, confirmation_prompt=True)
     set_secret(provider, secret)
@@ -148,18 +154,53 @@ def provider_add(provider: str = typer.Argument(...)) -> None:
 
 
 @provider_app.command("test")
-def provider_test() -> None:
-    provider = get_store().get("provider") or "local"
+def provider_test(
+    provider_name: str | None = typer.Option(
+        None, "--provider", help="Provider to test; defaults to the selected provider"
+    ),
+    timeout: float = typer.Option(10.0, "--timeout", min=1.0),
+) -> None:
+    """Validate a stored provider credential with one live read-only request."""
+    selected = get_store().get("provider") or "local"
+    provider = (provider_name or selected).strip().lower()
+    if provider not in ALL_PROVIDERS:
+        raise typer.BadParameter(f"Unsupported provider: {provider}")
     if provider == "local":
         console.print(
             "[green]Local-only provider is ready; no network request is required.[/]"
         )
-    elif has_secret(provider):
-        console.print(
-            f"[yellow]{provider} credential exists. Live provider validation is deferred until the provider adapter is implemented.[/]"
-        )
-    else:
+        return
+
+    secret = get_secret(provider)
+    if not secret:
         console.print(f"[red]No credential stored for {provider}.[/]")
+        raise typer.Exit(code=1)
+
+    result = validate_provider(provider, secret, timeout=timeout)
+    if result.ok:
+        http_status = (
+            result.http_status if result.http_status is not None else "UNKNOWN"
+        )
+        console.print(
+            f"[green]Verified:[/] {provider} credential accepted (HTTP {http_status})."
+        )
+        console.print(f"[dim]{redact_secret(result.detail, secret)}[/]")
+        console.print(
+            "[dim]Source: live provider API response; the key was sent in a header and was not printed.[/]"
+        )
+        return
+
+    labels = {
+        "invalid": "Rejected",
+        "unreachable": "Unreachable",
+        "unexpected": "Unverified",
+    }
+    console.print(
+        f"[red]{labels[result.status]}:[/] {redact_secret(result.detail, secret)}"
+    )
+    http_status = result.http_status if result.http_status is not None else "UNKNOWN"
+    console.print(f"[dim]HTTP status: {http_status}[/]")
+    raise typer.Exit(code=1)
 
 
 models_local_app = typer.Typer(help="Inspect local model files")
@@ -472,8 +513,11 @@ def doctor() -> None:
         "llama.cpp executable, a GGUF model, and explicit approval."
     )
     console.print(
-        "[yellow]Deferred:[/] live provider API validation and native telemetry sampling "
-        "for load time, prompt/eval split, peak RAM, and peak VRAM."
+        "[green]OK[/] Provider validation: live Gemini/Groq checks via kernl provider test"
+    )
+    console.print(
+        "[yellow]Deferred:[/] native telemetry sampling for load time, prompt/eval split, "
+        "peak RAM, and peak VRAM."
     )
 
 
