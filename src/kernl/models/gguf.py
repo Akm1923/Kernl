@@ -1,8 +1,9 @@
 from __future__ import annotations
+
+import struct
 from dataclasses import dataclass
 from pathlib import Path
-import struct
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 
 class GGUFError(ValueError):
@@ -23,6 +24,8 @@ class GGUFMetadata:
     quantization_version: int | None
     file_size_bytes: int
     metadata: dict[str, Any]
+    attention_head_count: int | None = None
+    attention_head_count_kv: int | None = None
 
 
 class GGUFReader:
@@ -45,7 +48,10 @@ class GGUFReader:
                     raise GGUFError(f"unsupported GGUF version: {version}")
                 if metadata_count > self.MAX_METADATA_ENTRIES:
                     raise GGUFError("metadata entry count is unreasonably large")
-                metadata = {self._string(handle): self._value(handle) for _ in range(metadata_count)}
+                metadata = {
+                    self._string(handle): self._value(handle)
+                    for _ in range(metadata_count)
+                }
         except (OSError, EOFError, struct.error) as exc:
             raise GGUFError(f"could not read GGUF metadata: {exc}") from exc
 
@@ -54,8 +60,16 @@ class GGUFReader:
         context_length = self._as_int(metadata.get(f"{prefix}context_length"))
         embedding_length = self._as_int(metadata.get(f"{prefix}embedding_length"))
         block_count = self._as_int(metadata.get(f"{prefix}block_count"))
+        attention_head_count = self._as_int(
+            metadata.get(f"{prefix}attention.head_count")
+        )
+        attention_head_count_kv = self._as_int(
+            metadata.get(f"{prefix}attention.head_count_kv")
+        )
         parameter_count = self._as_int(metadata.get("general.parameter_count"))
-        quantization_version = self._as_int(metadata.get("general.quantization_version"))
+        quantization_version = self._as_int(
+            metadata.get("general.quantization_version")
+        )
         return GGUFMetadata(
             path=path,
             version=version,
@@ -66,6 +80,8 @@ class GGUFReader:
             context_length=context_length,
             embedding_length=embedding_length,
             block_count=block_count,
+            attention_head_count=attention_head_count,
+            attention_head_count_kv=attention_head_count_kv,
             quantization_version=quantization_version,
             file_size_bytes=path.stat().st_size,
             metadata=metadata,
@@ -114,7 +130,19 @@ class GGUFReader:
         return self._value_payload(handle, value_type)
 
     def _value_payload(self, handle: BinaryIO, value_type: int) -> Any:
-        sizes = {0: ("u8", 1), 1: ("u8", 1), 2: ("u16", 2), 3: ("u32", 4), 4: ("u64", 8), 5: ("i8", 1), 6: ("i16", 2), 7: ("i32", 4), 8: ("i64", 8), 9: ("f32", 4), 10: ("f64", 8)}
+        sizes = {
+            0: ("u8", 1),
+            1: ("u8", 1),
+            2: ("u16", 2),
+            3: ("u32", 4),
+            4: ("u64", 8),
+            5: ("i8", 1),
+            6: ("i16", 2),
+            7: ("i32", 4),
+            8: ("i64", 8),
+            9: ("f32", 4),
+            10: ("f64", 8),
+        }
         if value_type not in sizes:
             raise GGUFError(f"unsupported array value type: {value_type}")
         return getattr(self, "_" + sizes[value_type][0])(handle)
@@ -127,7 +155,11 @@ class GGUFReader:
 
     @staticmethod
     def _as_int(value: Any) -> int | None:
-        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+        return (
+            int(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else None
+        )
 
     @staticmethod
     def _as_string(value: Any) -> str | None:
@@ -140,13 +172,32 @@ class GGUFReader:
             raise EOFError("unexpected end of file")
         return data
 
-    def _u8(self, h): return struct.unpack("<B", self._read_exact(h, 1))[0]
-    def _u16(self, h): return struct.unpack("<H", self._read_exact(h, 2))[0]
-    def _u32(self, h): return struct.unpack("<I", self._read_exact(h, 4))[0]
-    def _u64(self, h): return struct.unpack("<Q", self._read_exact(h, 8))[0]
-    def _i8(self, h): return struct.unpack("<b", self._read_exact(h, 1))[0]
-    def _i16(self, h): return struct.unpack("<h", self._read_exact(h, 2))[0]
-    def _i32(self, h): return struct.unpack("<i", self._read_exact(h, 4))[0]
-    def _i64(self, h): return struct.unpack("<q", self._read_exact(h, 8))[0]
-    def _f32(self, h): return struct.unpack("<f", self._read_exact(h, 4))[0]
-    def _f64(self, h): return struct.unpack("<d", self._read_exact(h, 8))[0]
+    def _u8(self, h):
+        return struct.unpack("<B", self._read_exact(h, 1))[0]
+
+    def _u16(self, h):
+        return struct.unpack("<H", self._read_exact(h, 2))[0]
+
+    def _u32(self, h):
+        return struct.unpack("<I", self._read_exact(h, 4))[0]
+
+    def _u64(self, h):
+        return struct.unpack("<Q", self._read_exact(h, 8))[0]
+
+    def _i8(self, h):
+        return struct.unpack("<b", self._read_exact(h, 1))[0]
+
+    def _i16(self, h):
+        return struct.unpack("<h", self._read_exact(h, 2))[0]
+
+    def _i32(self, h):
+        return struct.unpack("<i", self._read_exact(h, 4))[0]
+
+    def _i64(self, h):
+        return struct.unpack("<q", self._read_exact(h, 8))[0]
+
+    def _f32(self, h):
+        return struct.unpack("<f", self._read_exact(h, 4))[0]
+
+    def _f64(self, h):
+        return struct.unpack("<d", self._read_exact(h, 8))[0]

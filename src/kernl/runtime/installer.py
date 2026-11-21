@@ -1,9 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from pathlib import Path
+
 import hashlib
 import os
-import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -23,7 +23,13 @@ class RuntimeArtifact:
 class RuntimeInstaller:
     """Download and verify runtime artifacts; installation always needs approval."""
 
-    def install(self, artifact: RuntimeArtifact, destination: Path, *, approve_install: bool = False) -> Path:
+    def install(
+        self,
+        artifact: RuntimeArtifact,
+        destination: Path,
+        *,
+        approve_install: bool = False,
+    ) -> Path:
         if not approve_install:
             raise PermissionError("runtime installation requires explicit approval")
         self._validate_artifact(artifact)
@@ -32,7 +38,9 @@ class RuntimeInstaller:
         temporary = target.with_suffix(target.suffix + ".part")
         digest = hashlib.sha256()
         try:
-            with httpx.stream("GET", artifact.url, follow_redirects=True, timeout=60.0) as response:
+            with httpx.stream(
+                "GET", artifact.url, follow_redirects=True, timeout=60.0
+            ) as response:
                 response.raise_for_status()
                 with temporary.open("wb") as handle:
                     for chunk in response.iter_bytes(1024 * 1024):
@@ -53,7 +61,13 @@ class RuntimeInstaller:
         parsed = urlparse(artifact.url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise InstallationError("runtime artifact URL must use HTTPS")
-        if len(artifact.sha256) != 64 or any(char not in "0123456789abcdefABCDEF" for char in artifact.sha256):
-            raise InstallationError("runtime artifact SHA-256 must be 64 hexadecimal characters")
+        if len(artifact.sha256) != 64 or any(
+            char not in "0123456789abcdefABCDEF" for char in artifact.sha256
+        ):
+            raise InstallationError(
+                "runtime artifact SHA-256 must be 64 hexadecimal characters"
+            )
         if not artifact.filename or Path(artifact.filename).name != artifact.filename:
-            raise InstallationError("runtime artifact filename must not contain directories")
+            raise InstallationError(
+                "runtime artifact filename must not contain directories"
+            )

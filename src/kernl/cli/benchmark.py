@@ -1,9 +1,9 @@
 from __future__ import annotations
+
 from pathlib import Path
-import json
+from typing import Annotated
+
 import typer
-from kernl.benchmark import BenchmarkError, BenchmarkRunner
-from kernl.runtime.config_store import ConfigStore
 
 benchmark_app = typer.Typer(help="Measure real runtime performance")
 
@@ -13,7 +13,12 @@ def register_benchmark(app: typer.Typer) -> None:
 
 
 @benchmark_app.command("run")
-def benchmark_run(config_name: str, prompt: list[str] = typer.Option(..., "--prompt"), output: Path | None = typer.Option(None, "--output"), approve: bool = typer.Option(False, "--approve")) -> None:
+def benchmark_run(
+    config_name: str,
+    prompt: Annotated[list[str], typer.Option("--prompt")],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    approve: Annotated[bool, typer.Option("--approve")] = False,
+) -> None:
     """Run a supplied runtime callback only after execution approval.
 
     The llama.cpp inference callback is intentionally injected later; this command

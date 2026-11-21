@@ -1,6 +1,8 @@
 from enum import StrEnum
 from typing import Generic, TypeVar
+
 from pydantic import BaseModel, Field
+
 
 class ValueOrigin(StrEnum):
     DETECTED = "detected"
@@ -8,13 +10,16 @@ class ValueOrigin(StrEnum):
     ESTIMATED = "estimated"
     UNKNOWN = "unknown"
 
+
 T = TypeVar("T")
+
 
 class Provenance(BaseModel, Generic[T]):
     value: T | None = None
     origin: ValueOrigin = ValueOrigin.UNKNOWN
     source: str = ""
     warning: str | None = None
+
 
 class HardwareProfile(BaseModel):
     platform: Provenance[str]
@@ -26,6 +31,9 @@ class HardwareProfile(BaseModel):
     ram_available_bytes: Provenance[int]
     gpu_names: Provenance[list[str]]
     gpu_driver_versions: Provenance[list[str]]
+    gpu_memory_bytes: Provenance[list[int | None]] = Field(
+        default_factory=lambda: Provenance[list[int | None]]()
+    )
     storage_free_bytes: Provenance[int]
     backends: Provenance[list[str]]
     warnings: list[str] = Field(default_factory=list)
