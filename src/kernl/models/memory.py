@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -39,7 +40,12 @@ class MemoryEstimate:
 
     @property
     def fits(self) -> bool | None:
-        if self.total_bytes is None or self.available_bytes is None:
+        if (
+            self.total_bytes is None
+            or self.available_bytes is None
+            or self.model_bytes is None
+            or self.kv_cache_bytes is None
+        ):
             return None
         return self.total_bytes <= self.available_bytes
 
@@ -76,8 +82,18 @@ def estimate_memory(
         raise ValueError("context_tokens must be positive")
     if not 0 <= safety_fraction < 1:
         raise ValueError("safety_fraction must be between 0 and 1")
+    if layers is not None and layers < 1:
+        raise ValueError("layers must be positive when provided")
+    if embedding_length is not None and embedding_length < 1:
+        raise ValueError("embedding_length must be positive when provided")
+    if available_bytes is not None and available_bytes < 0:
+        raise ValueError("available_bytes cannot be negative")
 
-    quant = parse_quantization(quantization) if isinstance(quantization, str) else (quantization or Quantization.UNKNOWN)
+    quant = (
+        parse_quantization(quantization)
+        if isinstance(quantization, str)
+        else (quantization or Quantization.UNKNOWN)
+    )
     warnings: list[str] = []
     if parameter_count is None or parameter_count < 1:
         warnings.append("parameter count is unknown; model memory cannot be estimated")
@@ -95,7 +111,9 @@ def estimate_memory(
     else:
         warnings.append("layers or embedding length is unknown; KV cache is excluded")
 
-    known_components = [value for value in (model_bytes, kv_cache_bytes) if value is not None]
+    known_components = [
+        value for value in (model_bytes, kv_cache_bytes) if value is not None
+    ]
     runtime_overhead_bytes: int | None = None
     total_bytes: int | None = None
     safety_margin_bytes: int | None = None
