@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from kernl.core.types import HardwareProfile
 from kernl.models.gguf import GGUFMetadata
@@ -28,6 +29,11 @@ _GPU_MEMORY_FRACTION = 0.80
 _CPU_RESIDENT_WEIGHT_FRACTION = 0.20
 _RUNTIME_OVERHEAD_FRACTION = 0.10
 _SAFETY_MARGIN_FRACTION = 0.15
+_MAX_AUTO_LAYERS = 10_000
+_AUTO_LAYER_WARNING = (
+    "Automatic layers are the estimated maximum that fits under the planner's reserves, "
+    "not the fastest configuration; verify with a real llama.cpp load/benchmark."
+)
 _KV_BYTES_PER_ELEMENT = {
     "f16": 2.0,
     "f32": 4.0,
@@ -237,4 +243,154 @@ def plan_model_memory(
         gpu_fits=gpu_fits,
         overall_compatible=overall,
         warnings=tuple(warnings),
+    )
+
+
+AutoLayerStatus = Literal["fit", "unknown", "infeasible"]
+
+
+@dataclass(frozen=True)
+class AutoLayerRecommendation:
+    """Explained result of automatic GPU-layer selection."""
+
+    gpu_layers: int | None
+    status: AutoLayerStatus
+    gpu_index: int
+    gpu_name: str | None
+    gpu_budget_bytes: int | None
+    kv_cache_bytes: int | None
+    model_bytes: int
+    cpu_available_bytes: int | None
+    reason: str
+    warnings: tuple[str, ...]
+
+
+def recommend_gpu_layers(
+    metadata: GGUFMetadata,
+    profile: HardwareProfile,
+    *,
+    gpu_index: int = 0,
+    context_tokens: int | None = None,
+    kv_cache_type: str = "f16",
+    kv_cache_on_gpu: bool = True,
+) -> AutoLayerRecommendation:
+    """Select the largest layer count whose estimated CPU/GPU memory fits.
+
+    Every candidate is checked with :func:`plan_model_memory` so the selection
+    uses exactly the same estimates and reserves as an explicit plan. Missing
+    required information produces an ``unknown`` result instead of a confident
+    recommendation. The result is not a performance ranking.
+    """
+    baseline = plan_model_memory(
+        metadata,
+        profile,
+        gpu_layers=0,
+        gpu_index=gpu_index,
+        context_tokens=context_tokens,
+        kv_cache_type=kv_cache_type,
+        kv_cache_on_gpu=kv_cache_on_gpu,
+    )
+
+    names = profile.gpu_names.value or []
+    gpu_name: str | None
+    total_vram: int | None
+    if gpu_index >= len(names):
+        if gpu_index > 0 or names:
+            raise ValueError(
+                f"GPU index {gpu_index} is not present in the hardware profile"
+            )
+        gpu_name = None
+        total_vram = None
+    else:
+        gpu_name = names[gpu_index]
+        memories = profile.gpu_memory_bytes.value or []
+        total_vram = memories[gpu_index] if gpu_index < len(memories) else None
+        if total_vram is not None and total_vram < 0:
+            raise ValueError("GPU memory cannot be negative")
+
+    gpu_budget = (
+        int(total_vram * _GPU_MEMORY_FRACTION) if total_vram is not None else None
+    )
+    layers = metadata.block_count
+    if layers is not None and layers > _MAX_AUTO_LAYERS:
+        raise ValueError(
+            "GGUF block count is unreasonably large for automatic layer selection"
+        )
+
+    missing: list[str] = []
+    if layers is None:
+        missing.append("GGUF block count")
+    if baseline.cpu_available_bytes is None:
+        missing.append("available system RAM")
+    if baseline.kv_cache_bytes is None:
+        missing.append("KV-cache metadata")
+    if gpu_name is not None and total_vram is None:
+        missing.append(f"VRAM for {gpu_name}")
+
+    details = {
+        "gpu_index": gpu_index,
+        "gpu_name": gpu_name,
+        "gpu_budget_bytes": gpu_budget,
+        "kv_cache_bytes": baseline.kv_cache_bytes,
+        "model_bytes": baseline.model_bytes,
+        "cpu_available_bytes": baseline.cpu_available_bytes,
+        "warnings": (*baseline.warnings, _AUTO_LAYER_WARNING),
+    }
+
+    if missing:
+        return AutoLayerRecommendation(
+            gpu_layers=None,
+            status="unknown",
+            reason=(
+                "Cannot confirm an estimated-safe GPU layer count because "
+                + ", ".join(missing)
+                + " is unknown."
+            ),
+            **details,
+        )
+
+    candidates = range(layers, -1, -1) if gpu_name is not None else (0,)
+    for candidate in candidates:
+        plan = plan_model_memory(
+            metadata,
+            profile,
+            gpu_layers=candidate,
+            gpu_index=gpu_index,
+            context_tokens=context_tokens,
+            kv_cache_type=kv_cache_type,
+            kv_cache_on_gpu=kv_cache_on_gpu,
+        )
+        if plan.overall_compatible is not True:
+            continue
+        if gpu_name is None:
+            reason = (
+                "No GPU is present in the hardware profile; 0 layers "
+                "(CPU inference) is the only option."
+            )
+        elif candidate == 0:
+            reason = (
+                f"{gpu_name} VRAM budget does not fit even one offloaded layer; "
+                "0 layers keeps all weights on CPU and fits the CPU RAM estimate."
+            )
+        else:
+            reason = (
+                f"{candidate} is the largest of {layers} transformer blocks whose "
+                "estimated CPU RAM and selected GPU VRAM requirements both fit."
+            )
+        return AutoLayerRecommendation(
+            gpu_layers=candidate,
+            status="fit",
+            reason=reason,
+            **details,
+        )
+
+    return AutoLayerRecommendation(
+        gpu_layers=None,
+        status="infeasible",
+        reason=(
+            "No GPU layer count fits both the estimated CPU RAM and selected GPU "
+            "VRAM budgets; reduce context or KV-cache size, or use a smaller "
+            "model/quantization."
+        ),
+        **details,
     )

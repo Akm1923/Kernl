@@ -21,6 +21,10 @@ prepare a local llama.cpp runtime.
 - Hardware-aware `kernl model plan` estimates for CPU RAM and a selected GPU's
   VRAM. It accounts for GPU layer offload, KV-cache placement/type, per-device
   VRAM (never summed implicitly), and conservative memory reserves.
+- `--gpu-layers auto` selects the largest layer count that both the CPU RAM and
+  selected GPU VRAM estimates can fit, and explains the limiting constraint.
+  It reports UNKNOWN when required metadata is missing and NONE when no count
+  fits; it never claims a success based on estimated memory alone.
 - Runtime configs can keep the KV cache on CPU with `--kv-cache-on-cpu`; the
   generated llama.cpp arguments include `--no-kv-offload`.
 - Hugging Face model discovery and model recommendations.
@@ -42,6 +46,15 @@ full embedding width. The planner reserves 20% of detected total VRAM because
 current hardware scanning does not measure free VRAM. Review its warnings and
 use a real llama.cpp load/benchmark before relying on a configuration.
 
+`--gpu-layers auto` scans from the model's full block count down to zero and
+reuses the same estimator for each candidate. Its answer is the estimated
+maximum fitting layer count, not the fastest configuration; placing fewer
+layers on the GPU can still be preferable in practice. Unknown VRAM, available
+RAM, KV-cache metadata, or block count keeps the recommendation UNKNOWN. With a
+known but too-small VRAM budget it returns zero offload layers when the CPU
+estimate fits, and NONE when no configuration fits. Actual runtime loading
+remains the final compatibility check.
+
 ## Development
 
 Python 3.11 or newer is required.
@@ -56,6 +69,7 @@ kernl scan
 kernl profile
 kernl model inspect .\\models\\your-model.gguf
 kernl model plan .\\models\\your-model.gguf --gpu-layers 20
+kernl model plan .\\models\\your-model.gguf --gpu-layers auto
 ```
 
 The CI matrix runs the test suite on Windows and Ubuntu with Python 3.11 and 3.13.

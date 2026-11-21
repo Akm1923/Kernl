@@ -15,7 +15,7 @@ from kernl.cli.models import register_models
 from kernl.hardware.scanner import scan
 from kernl.models.gguf import GGUFError, GGUFReader
 from kernl.models.memory import estimate_memory
-from kernl.models.planner import plan_model_memory
+from kernl.models.planner import plan_model_memory, recommend_gpu_layers
 from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
 from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
@@ -182,10 +182,29 @@ def model_inspect(
         console.print(f"[bold]{key}:[/] {value if value is not None else 'UNKNOWN'}")
 
 
+def _parse_gpu_layers_option(value: str) -> int | str:
+    """Accept an explicit layer count, -1 (all), or 'auto'."""
+    normalized = value.strip().lower()
+    if normalized == "auto":
+        return "auto"
+    message = "--gpu-layers must be an integer >= -1 or 'auto'"
+    try:
+        layers = int(normalized)
+    except ValueError as exc:
+        raise typer.BadParameter(message) from exc
+    if layers < -1:
+        raise typer.BadParameter(message)
+    return layers
+
+
 @models_local_app.command("plan")
 def model_plan(
     path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    gpu_layers: int = typer.Option(0, "--gpu-layers", min=-1),
+    gpu_layers: str = typer.Option(
+        "0",
+        "--gpu-layers",
+        help="Layer count, -1 for all, or auto for the estimated-safe maximum",
+    ),
     gpu_index: int = typer.Option(0, "--gpu-index", min=0),
     context_tokens: int | None = typer.Option(None, "--context", min=1),
     kv_cache_type: str = typer.Option("f16", "--kv-cache-type"),
@@ -193,11 +212,28 @@ def model_plan(
 ) -> None:
     """Estimate CPU RAM and selected GPU VRAM needs for a local GGUF model."""
     try:
+        layers_option = _parse_gpu_layers_option(gpu_layers)
         metadata = GGUFReader().read(path)
+        profile = scan()
+        recommendation = None
+        if layers_option == "auto":
+            recommendation = recommend_gpu_layers(
+                metadata,
+                profile,
+                gpu_index=gpu_index,
+                context_tokens=context_tokens,
+                kv_cache_type=kv_cache_type,
+                kv_cache_on_gpu=not kv_cache_on_cpu,
+            )
+            resolved_layers = (
+                recommendation.gpu_layers if recommendation.status == "fit" else None
+            )
+        else:
+            resolved_layers = layers_option
         plan = plan_model_memory(
             metadata,
-            scan(),
-            gpu_layers=gpu_layers,
+            profile,
+            gpu_layers=resolved_layers if resolved_layers is not None else 0,
             gpu_index=gpu_index,
             context_tokens=context_tokens,
             kv_cache_type=kv_cache_type,
@@ -211,6 +247,24 @@ def model_plan(
 
     def fit_label(value: bool | None) -> str:
         return {True: "YES", False: "NO", None: "UNKNOWN"}[value]
+
+    if recommendation is not None:
+        statuses = {
+            "fit": "estimated maximum fit; not the fastest configuration",
+            "unknown": "UNKNOWN — required information is missing",
+            "infeasible": "NONE — no estimated-safe layer count",
+        }
+        selected = (
+            str(recommendation.gpu_layers)
+            if recommendation.status == "fit"
+            else "UNKNOWN"
+        )
+        console.print(f"[bold]Estimated-safe GPU layers:[/] {selected}")
+        console.print(f"[bold]Selection status:[/] {statuses[recommendation.status]}")
+        console.print(f"[bold]Recommendation basis:[/] {recommendation.reason}")
+        for warning in recommendation.warnings:
+            if warning not in plan.warnings:
+                console.print(f"[yellow]Warning:[/] {warning}")
 
     console.print(f"[bold]Model:[/] {path}")
     console.print(
@@ -236,7 +290,12 @@ def model_plan(
             f"[bold]{plan.gpu_name} VRAM:[/] {format_bytes(plan.gpu_required_bytes)} {gpu_requirement_label} / "
             f"{format_bytes(plan.gpu_budget_bytes)} budget — {fit_label(plan.gpu_fits)}"
         )
-        console.print(f"[bold]GPU layers:[/] {plan.gpu_layers}")
+        layer_label = (
+            "GPU layers used for estimate"
+            if recommendation is not None
+            else "GPU layers"
+        )
+        console.print(f"[bold]{layer_label}:[/] {plan.gpu_layers}")
     else:
         console.print("[bold]GPU offload:[/] disabled")
     console.print(
