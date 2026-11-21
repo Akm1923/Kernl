@@ -40,9 +40,24 @@ def test_benchmark_run_measures_real_callback_and_stores_results(monkeypatch, tm
     def fake_infer(self, config, prompt, *, approve_execution, timeout):
         calls.append(prompt)
         assert approve_execution is True
-        return 4
+        from kernl.core.telemetry import InferenceTelemetry
 
-    monkeypatch.setattr("kernl.cli.benchmark.LlamaCppAdapter.infer_once", fake_infer)
+        return InferenceTelemetry(
+            generated_tokens=4,
+            wall_seconds=1.0,
+            time_to_first_output_seconds=0.3,
+            load_time_seconds=0.5,
+            prompt_eval_seconds=0.2,
+            prompt_tokens=8,
+            prompt_tokens_per_second=40.0,
+            generation_tokens_per_second=4.0,
+            peak_rss_bytes=1024,
+            peak_vram_bytes=None,
+        )
+
+    monkeypatch.setattr(
+        "kernl.cli.benchmark.LlamaCppAdapter.infer_once_telemetry", fake_infer
+    )
     output = tmp_path / "results" / "run.json"
 
     result = runner.invoke(
@@ -86,7 +101,9 @@ def test_benchmark_run_reports_runtime_failures(monkeypatch, tmp_path):
     def fail(self, config, prompt, *, approve_execution, timeout):
         raise RuntimeError("model load failed")
 
-    monkeypatch.setattr("kernl.cli.benchmark.LlamaCppAdapter.infer_once", fail)
+    monkeypatch.setattr(
+        "kernl.cli.benchmark.LlamaCppAdapter.infer_once_telemetry", fail
+    )
 
     result = runner.invoke(
         app, ["benchmark", "run", "demo", "--prompt", "hello", "--approve"]
