@@ -8,6 +8,9 @@ prepare a local llama.cpp runtime.
 
 - Rich CLI startup, provider onboarding, and secure API-key storage through the
   operating-system keyring.
+- Live Gemini/Groq credential validation with `kernl provider test`. The key is
+  sent in a request header, redacted from output, and never copied into SQLite,
+  logs, or results.
 - Hardware profile for CPU, RAM, storage, Windows display adapters, and driver
   versions.
 - GPU memory reporting with explicit provenance:
@@ -84,6 +87,9 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[test]"
 python -m pytest -q
+kernl provider list
+kernl provider add gemini
+kernl provider test
 kernl init
 kernl scan
 kernl profile
