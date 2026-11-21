@@ -35,7 +35,19 @@ prepare a local llama.cpp runtime.
   never treated as proof of compatibility; recommendations use GGUF file size
   only and point to `kernl model plan --gpu-layers auto` for a full estimate.
 - Verified runtime artifact installation and local runtime configuration.
-- SQLite persistence for settings and hardware profiles.
+  `kernl config save ... --gpu-layers auto` resolves a concrete estimated-safe
+  layer count and refuses to save when the planner cannot confirm it.
+- `kernl runtime verify <config> --approve` performs one observed llama.cpp
+  inference against a saved configuration; execution is never implicit.
+- `kernl benchmark run` measures real inferences through the llama.cpp adapter,
+  stores raw JSON/CSV samples and SQLite results, and `kernl benchmark compare`
+  shows only previously measured values. Load time, prompt/eval split, peak RAM,
+  and peak VRAM are explicitly reported as unmeasured until richer runtime
+  telemetry is available.
+- Restricted agent workspace with typed tools, approval gates, workspace-scoped
+  paths, and an auditable action log. No shell or arbitrary-code tool is exposed.
+- SQLite persistence for settings, hardware profiles, benchmark results, and
+  agent actions.
 
 Backend detection is a capability signal, not proof that a particular model can
 run on a particular GPU. Runtime compatibility and actual inference performance
@@ -58,6 +70,11 @@ known but too-small VRAM budget it returns zero offload layers when the CPU
 estimate fits, and NONE when no configuration fits. Actual runtime loading
 remains the final compatibility check.
 
+Runtime verification and benchmarking require an existing llama.cpp executable,
+a local GGUF file, and explicit `--approve`. They do not download models or
+install binaries implicitly. Their output is labelled as observed or measured;
+estimation, detection, and unknown values are never mixed into the same result.
+
 ## Development
 
 Python 3.11 or newer is required.
@@ -76,6 +93,15 @@ kernl model plan .\\models\\your-model.gguf --gpu-layers auto
 kernl models search "qwen"
 kernl models inspect Qwen/Qwen2.5-0.5B-Instruct-GGUF
 kernl models recommend "qwen"
+kernl config save local .\models\your-model.gguf --gpu-layers auto
+kernl runtime status
+kernl runtime verify local --approve --prompt "Hello"
+kernl benchmark run local --prompt "Hello" --approve --output .\results\run.json
+kernl benchmark compare local baseline
+kernl agent
+kernl agent tools
+kernl agent run hardware_profile
+kernl agent audit
 ```
 
 The CI matrix runs the test suite on Windows and Ubuntu with Python 3.11 and 3.13.

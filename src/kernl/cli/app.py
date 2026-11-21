@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from kernl import __version__
+from kernl.cli.agent import register_agent
 from kernl.cli.banner import render_banner
 from kernl.cli.benchmark import register_benchmark
 from kernl.cli.models import register_models
@@ -19,6 +20,7 @@ from kernl.models.planner import plan_model_memory, recommend_gpu_layers
 from kernl.runtime.config import RuntimeConfig
 from kernl.runtime.config_store import ConfigStore
 from kernl.runtime.installer import InstallationError, RuntimeArtifact, RuntimeInstaller
+from kernl.runtime.llama_cpp import LlamaCppAdapter, RuntimeErrorBase
 from kernl.security import has_secret, set_secret
 from kernl.storage.db import Store
 
@@ -28,6 +30,7 @@ DATA_DIR = Path.home() / ".kernl"
 CONFIG_DIR = DATA_DIR / "configs"
 register_models(app)
 register_benchmark(app)
+register_agent(app)
 
 
 def get_store() -> Store:
@@ -364,6 +367,38 @@ def runtime_status(executable: str = typer.Option("llama-cli", "--executable")) 
     )
 
 
+@runtime_app.command("verify")
+def runtime_verify(
+    name: str = typer.Argument(...),
+    approve: bool = typer.Option(
+        False, "--approve", help="Explicitly allow model execution"
+    ),
+    executable: str = typer.Option("llama-cli", "--executable"),
+    prompt: str = typer.Option("Hello", "--prompt"),
+    timeout: float = typer.Option(120.0, "--timeout", min=1.0),
+) -> None:
+    """Run one real llama.cpp inference against a saved configuration."""
+    if not approve:
+        raise typer.BadParameter(
+            "runtime verification requires explicit approval via --approve"
+        )
+    resolved = shutil.which(executable)
+    if not resolved:
+        raise typer.BadParameter(f"llama.cpp executable not found: {executable}")
+    try:
+        config = ConfigStore(CONFIG_DIR).load(name)
+        tokens = LlamaCppAdapter(Path(resolved)).infer_once(
+            config, prompt, approve_execution=True, timeout=timeout
+        )
+    except (FileNotFoundError, PermissionError, RuntimeErrorBase, ValueError) as exc:
+        console.print(f"[red]Verification failed:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Observed:[/] {tokens} generated tokens")
+    console.print(
+        "[dim]Source: observed llama.cpp inference; no simulated throughput is reported.[/]"
+    )
+
+
 config_app = typer.Typer(help="Manage runtime configurations")
 app.add_typer(config_app, name="config")
 
@@ -372,20 +407,54 @@ app.add_typer(config_app, name="config")
 def config_save(
     name: str,
     model_path: Path,
-    context_size: int = 4096,
-    gpu_layers: int = 0,
+    context_size: int = typer.Option(4096, "--context-size", min=128, max=1_048_576),
+    gpu_layers: str = typer.Option(
+        "0",
+        "--gpu-layers",
+        help="Layer count, -1 for all, or auto for the estimated-safe count",
+    ),
     kv_cache_on_cpu: bool = typer.Option(False, "--kv-cache-on-cpu"),
 ) -> None:
-    path = ConfigStore(CONFIG_DIR).save(
-        name,
-        RuntimeConfig(
-            model_path=model_path,
-            context_size=context_size,
-            gpu_layers=gpu_layers,
-            kv_cache_on_gpu=not kv_cache_on_cpu,
-        ),
-    )
+    try:
+        layers_option = _parse_gpu_layers_option(gpu_layers)
+        resolved_layers: int
+        if layers_option == "auto":
+            metadata = GGUFReader().read(model_path)
+            profile = scan()
+            recommendation = recommend_gpu_layers(
+                metadata,
+                profile,
+                gpu_index=0,
+                context_tokens=context_size,
+                kv_cache_type="f16",
+                kv_cache_on_gpu=not kv_cache_on_cpu,
+            )
+            if recommendation.status != "fit" or recommendation.gpu_layers is None:
+                raise typer.BadParameter(
+                    f"Cannot save auto GPU layers: {recommendation.reason}"
+                )
+            resolved_layers = recommendation.gpu_layers
+            estimated = True
+        else:
+            resolved_layers = layers_option
+            estimated = False
+        path = ConfigStore(CONFIG_DIR).save(
+            name,
+            RuntimeConfig(
+                model_path=model_path,
+                context_size=context_size,
+                gpu_layers=resolved_layers,
+                kv_cache_on_gpu=not kv_cache_on_cpu,
+            ),
+        )
+    except (GGUFError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     console.print(f"[green]Saved:[/] {path}")
+    if estimated:
+        console.print(
+            f"[yellow]Estimated-safe GPU layers:[/] {resolved_layers} "
+            "(planning estimate, not a measured runtime result)."
+        )
 
 
 @config_app.command("show")
@@ -399,18 +468,13 @@ def doctor() -> None:
     console.print(f"[green]OK[/] Data directory: {DATA_DIR}")
     console.print("[green]OK[/] SQLite store: available")
     console.print(
-        "[yellow]Deferred:[/] provider API validation, runtime execution, and end-to-end benchmarks require local credentials/binaries."
+        "[yellow]Requires local assets:[/] runtime verification and benchmarks need a "
+        "llama.cpp executable, a GGUF model, and explicit approval."
     )
-
-
-@app.command()
-def agent() -> None:
-    render_banner(console, __version__)
-    console.print("[bold]Restricted agent workspace[/]")
     console.print(
-        "Available actions: scan, profile show, provider list, models search, model inspect/estimate/plan, runtime status, benchmark run."
+        "[yellow]Deferred:[/] live provider API validation and native telemetry sampling "
+        "for load time, prompt/eval split, peak RAM, and peak VRAM."
     )
-    console.print("No unrestricted shell execution is exposed.")
 
 
 if __name__ == "__main__":
